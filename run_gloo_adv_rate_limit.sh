@@ -150,7 +150,6 @@ http --json ${PROXY_URL}/api/pets
 kubectl --namespace gloo-system rollout status deployment/auth-server --watch=true
 
 # Patch Gloo Settings and default Virtual Service to reference custom auth service
-
 kubectl --namespace gloo-system patch settings default \
   --type='merge' \
   --patch "$(cat<<EOF
@@ -161,9 +160,6 @@ spec:
         extauthzServerRef:
           name: gloo-system-auth-server-8000
           namespace: gloo-system
-        # httpService:
-        #   response:
-        #     allowedUpstreamHeaders: ['x-server', 'x-a', 'x-b', 'x-c', 'x-d', 'x-e']
         requestBody:
           maxRequestBytes: 10240
         requestTimeout: 1s
@@ -197,7 +193,7 @@ spec:
             transformationTemplate:
               headers:
                 x-xform-a:
-                  text: '{{ header("x-a") }}'
+                  text: '{{ header("x-auth-a") }}'
     virtualHostPlugins:
       extensions:
         configs:
