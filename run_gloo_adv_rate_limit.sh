@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 
 # Expects
-# brew install kubernetes-cli kubernetes-helm go skaffold jq httpie
+# brew install kubernetes-cli kubernetes-helm skaffold httpie
+
+# Optional
+# brew install go jq; brew cask install minikube
 
 # Based on GlooE Custom Auth server example
 # https://gloo.solo.io/enterprise/authentication/custom_auth/
@@ -22,32 +25,36 @@ K8S_TOOL="${K8S_TOOL:-kind}" # kind or minikube
 
 case "$K8S_TOOL" in
   kind)
-    GO111MODULE="on" go get sigs.k8s.io/kind@v0.4.0
+    if [[ -x $(command -v go) ]] && [[ $(go version) =~ "go1.12.[6-9]" ]]; then
+      # Install latest version of kind https://kind.sigs.k8s.io/
+      GO111MODULE="on" go get sigs.k8s.io/kind@v0.4.0
+    fi
 
     DEMO_CLUSTER_NAME="${DEMO_CLUSTER_NAME:-kind}"
 
     # Delete existing cluster, i.e. restart cluster
-    if [[ "$(kind get clusters)" == *"$DEMO_CLUSTER_NAME"* ]]; then
+    if [[ $(kind get clusters) == *"$DEMO_CLUSTER_NAME"* ]]; then
       kind delete cluster --name "$DEMO_CLUSTER_NAME"
     fi
 
     # Setup local Kubernetes cluster using kind (Kubernetes IN Docker) with control plane and worker nodes
-    kind create cluster --name "${DEMO_CLUSTER_NAME}" --wait 60s
+    kind create cluster --name "$DEMO_CLUSTER_NAME" --wait 60s
 
     # Configure environment for kubectl to connect to kind cluster
-    export KUBECONFIG="$(kind get kubeconfig-path --name=${DEMO_CLUSTER_NAME})"
+    export KUBECONFIG="$(kind get kubeconfig-path --name=$DEMO_CLUSTER_NAME)"
     ;;
 
   minikube)
     DEMO_CLUSTER_NAME="${DEMO_CLUSTER_NAME:-minikube}"
 
-    minikube delete --profile "${DEMO_CLUSTER_NAME}" && true # Ignore errors
-    minikube start --profile "${DEMO_CLUSTER_NAME}"
+    minikube delete --profile "$DEMO_CLUSTER_NAME" && true # Ignore errors
+    minikube start --profile "$DEMO_CLUSTER_NAME"
 
-    source <(minikube docker-env -p "${DEMO_CLUSTER_NAME}")
+    source <(minikube docker-env -p "$DEMO_CLUSTER_NAME")
     ;;
 esac
 
+# Tell skaffold how to connect to local Kubernetes cluster running in non-default profile name
 skaffold config set --kube-context $(kubectl config current-context) local-cluster true
 
 TILLER_MODE="${TILLER_MODE:-local}" # local or cluster
@@ -56,13 +63,13 @@ case "$TILLER_MODE" in
   local)
     # Run Tiller locally (external) to Kubernetes cluster as it's faster
     TILLER_PID_FILE=/tmp/tiller.pid
-    if [ -f "${TILLER_PID_FILE}" ]; then
-      (cat "${TILLER_PID_FILE}" | xargs kill) && true # Ignore errors killing old Tiller process
-      rm "${TILLER_PID_FILE}"
+    if [[ -f $TILLER_PID_FILE ]]; then
+      (cat "$TILLER_PID_FILE" | xargs kill) && true # Ignore errors killing old Tiller process
+      rm "$TILLER_PID_FILE"
     fi
     TILLER_PORT=":44134"
-    ((tiller --storage=secret --listen=${TILLER_PORT}) & echo $! > "${TILLER_PID_FILE}" &)
-    export HELM_HOST=${TILLER_PORT}
+    ((tiller --storage=secret --listen=$TILLER_PORT) & echo $! > "$TILLER_PID_FILE" &)
+    export HELM_HOST=$TILLER_PORT
     ;;
 
   cluster)
@@ -81,11 +88,11 @@ case "$TILLER_MODE" in
     ;;
 esac
 
-if [ -f ~/scripts/secret/glooe_license_key.sh ]; then
+if [[ -f ~/scripts/secret/glooe_license_key.sh ]]; then
   # export GLOOE_LICENSE_KEY=<valid key>
   source ~/scripts/secret/glooe_license_key.sh
 fi
-if [ -z "${GLOOE_LICENSE_KEY}" ]; then
+if [[ -z $GLOOE_LICENSE_KEY ]]; then
   echo "Must set GLOOE_LICENSE_KEY with GlooE activation key"
 fi
 
@@ -93,7 +100,7 @@ helm repo add glooe http://storage.googleapis.com/gloo-ee-helm
 helm upgrade --install glooe glooe/gloo-ee \
   --namespace gloo-system \
   --version 0.16.2 \
-  --set-string license_key=${GLOOE_LICENSE_KEY}
+  --set-string license_key=$GLOOE_LICENSE_KEY
 
 # Deploy echo-server app and wait for it to fully deploy
 ( cd echo_server; skaffold run )
@@ -125,7 +132,7 @@ EOF
 kubectl --namespace gloo-system rollout status deployment/gateway-proxy --watch=true
 
 # Wait for Virtual Service changes to get applied to proxy
-until [[ "$(kubectl --namespace gloo-system get virtualservice default -o=jsonpath='{.status.state}')" = "1" ]]; do
+until [[ $(kubectl --namespace gloo-system get virtualservice default -o=jsonpath='{.status.state}') = "1" ]]; do
   sleep 5
 done
 
@@ -136,8 +143,8 @@ sleep 15
 
 PROXY_URL="http://localhost:8080"
 
-# curl --silent --show-error ${PROXY_URL}/api/pets | jq
-http --json ${PROXY_URL}/api/pets
+# curl --silent --show-error $PROXY_URL/api/pets | jq
+http --json $PROXY_URL/api/pets
 
 #
 # Add custom auth-server
@@ -166,8 +173,7 @@ spec:
 EOF
 )"
 
-# Update Virtual Service to both reference custom auth-server and
-#   add request transformation between auth-server and upstream echo-server
+# Update Virtual Service to reference custom auth-server
 kubectl --namespace gloo-system apply --filename - <<EOF
 apiVersion: gateway.solo.io/v1
 kind: VirtualService
@@ -187,13 +193,6 @@ spec:
           upstream:
             name: default-echo-server-8080
             namespace: gloo-system
-      routePlugins:
-        transformations:
-          requestTransformation:
-            transformationTemplate:
-              headers:
-                x-xform-a:
-                  text: '{{ header("x-auth-a") }}'
     virtualHostPlugins:
       extensions:
         configs:
@@ -202,19 +201,19 @@ spec:
 EOF
 
 sleep 5
-until [[ "$(kubectl --namespace gloo-system get virtualservice default -o=jsonpath='{.status.state}')" = "1" ]]; do
+until [[ $(kubectl --namespace gloo-system get virtualservice default -o=jsonpath='{.status.state}') = "1" ]]; do
   sleep 5
 done
 
 sleep 10
 
 printf "Should return 200\n"
-# curl --verbose --silent --show-error --write-out "%{http_code}\n" ${PROXY_URL}/api/pets/1 | jq
-http --json ${PROXY_URL}/api/pets/1
+# curl --verbose --silent --show-error --write-out "%{http_code}\n" $PROXY_URL/api/pets/1 | jq
+http --json $PROXY_URL/api/pets/1
 
 printf "Should return 403\n"
-# curl --verbose --silent --show-error --write-out "%{http_code}\n" ${PROXY_URL}/api/pets/2 | jq
-http --json ${PROXY_URL}/api/pets/2
+# curl --verbose --silent --show-error --write-out "%{http_code}\n" $PROXY_URL/api/pets/2 | jq
+http --json $PROXY_URL/api/pets/2
 
 #
 # Add Envoy Rate Limiting
@@ -276,56 +275,16 @@ sleep 15
 
 # Succeed
 printf "Should return 200\n"
-# curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:1" ${PROXY_URL}/api/pets/1 | jq
-http --json ${PROXY_URL}/api/pets/1 x-req-a:1
+# curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:1" $PROXY_URL/api/pets/1 | jq
+http --json $PROXY_URL/api/pets/1 x-req-a:1
 
 # Rate limited
 printf "Should return 429\n"
-http --json ${PROXY_URL}/api/pets/1 x-req-a:1
+http --json $PROXY_URL/api/pets/1 x-req-a:1
 
 # Succeed
 printf "Should return 200\n"
-http --json ${PROXY_URL}/api/pets/1 x-req-a:2
-
-#
-# Rate Limit against requestTransformation header
-#
-
-# glooctl edit virtualservice --namespace gloo-system --name default ratelimit custom-envoy-config
-
-# rate_limits:
-# - actions:
-#   - requestHeaders:
-#       descriptorKey: x-a-header
-#       headerName: x-xform-a
-
-kubectl --namespace gloo-system patch virtualservice default \
-  --type='json' \
-  --patch "$(cat<<EOF
-[
-    {
-        "op": "replace",
-        "path": "/spec/virtualHost/virtualHostPlugins/extensions/configs/envoy-rate-limit/rate_limits/0/actions/0/requestHeaders/headerName",
-        "value": "x-xform-a"
-    }
-]
-EOF
-)"
-
-sleep 15
-
-# Succeed
-printf "Should return 200\n"
-# curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:1" ${PROXY_URL}/api/pets/1 | jq
-http --json ${PROXY_URL}/api/pets/1 x-req-a:1
-
-# Rate limited
-printf "Should return 429\n"
-http --json ${PROXY_URL}/api/pets/1 x-req-a:1
-
-# Succeed
-printf "Should return 200\n"
-http --json ${PROXY_URL}/api/pets/1 x-req-a:2
+http --json $PROXY_URL/api/pets/1 x-req-a:2
 
 #
 # Rate Limiting descriptor experiments
@@ -342,6 +301,10 @@ http --json ${PROXY_URL}/api/pets/1 x-req-a:2
 # - key: x-b-header
 #   rateLimit:
 #     requestsPerUnit: 1
+#     unit: MINUTE
+# - key: x-c-header
+#   rateLimit:
+#     requestsPerUnit: 2
 #     unit: MINUTE
 
 kubectl --namespace gloo-system patch settings default \
@@ -402,12 +365,6 @@ spec:
                 - requestHeaders:
                     descriptorKey: x-c-header
                     headerName: x-auth-c
-        transformations:
-          requestTransformation:
-            transformationTemplate:
-              headers:
-                x-xform-c:
-                  text: '{{ header("x-auth-c") }}'
     - matcher:
         prefix: /other
       routeAction:
@@ -425,12 +382,6 @@ spec:
                 - requestHeaders:
                     descriptorKey: x-b-header
                     headerName: x-auth-b
-        transformations:
-          requestTransformation:
-            transformationTemplate:
-              headers:
-                x-xform-b:
-                  text: '{{ header("x-auth-b") }}'
     - matcher:
         prefix: /
       routeAction:
@@ -448,12 +399,6 @@ spec:
                 - requestHeaders:
                     descriptorKey: x-b-header
                     headerName: x-auth-b
-        transformations:
-          requestTransformation:
-            transformationTemplate:
-              headers:
-                x-xform-a:
-                  text: '{{ header("x-auth-a") }}'
     virtualHostPlugins:
       extensions:
         configs:
@@ -471,45 +416,45 @@ sleep 15
 
 # Succeed
 printf "Should return 200\n"
-# curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:10" --header "x-req-b:10" --header "always-approve:true" ${PROXY_URL}/api/pets/1 | jq
-http --json ${PROXY_URL}/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+# curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:10" --header "x-req-b:10" --header "always-approve:true" $PROXY_URL/api/pets/1 | jq
+http --json $PROXY_URL/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
 
 # Rate limited
 printf "Should return 429\n"
-http --json ${PROXY_URL}/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+http --json $PROXY_URL/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
 
 # Rate limited
 printf "Should return 429\n"
-http --json ${PROXY_URL}/api/pets/1 x-req-a:20 x-req-b:10 always-approve:true
+http --json $PROXY_URL/api/pets/1 x-req-a:20 x-req-b:10 always-approve:true
 
 # Succeed
 printf "Should return 200\n"
-http --json ${PROXY_URL}/api/pets/1 x-req-a:30 x-req-b:30 always-approve:true
+http --json $PROXY_URL/api/pets/1 x-req-a:30 x-req-b:30 always-approve:true
 
 # Succeed
 printf "Should return 200\n"
-http --json ${PROXY_URL}/other x-req-a:30 x-req-b:40 always-approve:true
+http --json $PROXY_URL/other x-req-a:30 x-req-b:40 always-approve:true
 
 # Succeed
 printf "Should return 200\n"
-http --json ${PROXY_URL}/other x-req-a:30 x-req-b:50 always-approve:true
+http --json $PROXY_URL/other x-req-a:30 x-req-b:50 always-approve:true
 
 # Rate limited
 printf "Should return 429\n"
-http --json ${PROXY_URL}/other x-req-a:40 x-req-b:50 always-approve:true
+http --json $PROXY_URL/other x-req-a:40 x-req-b:50 always-approve:true
 
 # Succeed
 printf "Should return 200\n"
-http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:60 x-req-c:10 always-approve:true
+http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:60 x-req-c:10 always-approve:true
 
 # Succeed as `c` header is 2 per minute
 printf "Should return 200\n"
-http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:61 x-req-c:10 always-approve:true
+http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:61 x-req-c:10 always-approve:true
 
 # Rate Limit
 printf "Should return 429\n"
-http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:62 x-req-c:10 always-approve:true
+http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:62 x-req-c:10 always-approve:true
 
 # Succeed
 printf "Should return 200\n"
-http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:63 x-req-c:11 always-approve:true
+http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:63 x-req-c:11 always-approve:true
