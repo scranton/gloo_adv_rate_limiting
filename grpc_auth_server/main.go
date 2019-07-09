@@ -24,45 +24,48 @@ type server struct{}
 func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResponse, error) {
 	http := req.GetAttributes().GetRequest().GetHttp()
 
-	log.Println(http.GetHeaders())
-	log.Println(http.GetPath())
+	headers := http.GetHeaders()
+	path := http.GetPath()
+
+	log.Println(headers)
+	log.Println(path)
 
 	respHeaders := []*core.HeaderValueOption{
 		{
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
 				Key:   "x-auth-a",
-				Value: http.GetHeaders()["x-req-a"],
+				Value: headers["x-req-a"],
 			},
 		},
 		{
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
 				Key:   "x-auth-b",
-				Value: "B custom auth header",
+				Value: headers["x-req-b"],
 			},
 		}, {
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
 				Key:   "x-auth-c",
-				Value: "C custom auth header",
+				Value: headers["x-req-c"],
 			},
 		}, {
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
 				Key:   "x-auth-d",
-				Value: "D custom auth header",
+				Value: headers["x-req-d"],
 			},
 		}, {
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
 				Key:   "x-auth-e",
-				Value: "E custom auth header",
+				Value: headers["x-req-e"],
 			},
 		},
 	}
 
-	if strings.HasPrefix(http.GetPath(), "/api/pets/1") {
+	if strings.HasPrefix(path, "/api/pets/1") || headers["always-approve"] == "true" {
 		log.Println("Approved")
 		return &pb.CheckResponse{
 			Status: &googlerpc.Status{Code: int32(googlerpc.OK)},

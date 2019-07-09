@@ -300,7 +300,7 @@ kubectl --namespace gloo-system patch virtualservice default \
 [
     {
         "op": "replace",
-        "path": "/spec/virtualHost/virtualHostPlugins/extensions/configs/envoy-rate-limit/rateLimits/0/actions/0/requestHeaders/headerName",
+        "path": "/spec/virtualHost/virtualHostPlugins/extensions/configs/envoy-rate-limit/rate_limits/0/actions/0/requestHeaders/headerName",
         "value": "x-xform-a"
     }
 ]
@@ -316,3 +316,129 @@ http --json ${PROXY_URL}/api/pets/1 x-req-a:1
 http --json ${PROXY_URL}/api/pets/1 x-req-a:1
 # Succeed
 http --json ${PROXY_URL}/api/pets/1 x-req-a:2
+
+#
+# Rate Limiting descriptor experiments
+#
+
+# Edit Envoy Rate Server Settings
+# glooctl edit settings --namespace gloo-system --name default ratelimit custom-server-config
+
+# descriptors:
+# - key: x-a-header
+#   rateLimit:
+#     requestsPerUnit: 1
+#     unit: MINUTE
+# - key: x-b-header
+#   rateLimit:
+#     requestsPerUnit: 1
+#     unit: MINUTE
+
+kubectl --namespace gloo-system patch settings default \
+  --type='merge' \
+  --patch "$(cat<<EOF
+spec:
+  extensions:
+    configs:
+      envoy-rate-limit:
+        customConfig:
+          descriptors:
+          - key: x-a-header
+            rateLimit:
+              requestsPerUnit: 1
+              unit: MINUTE
+          - key: x-b-header
+            rateLimit:
+              requestsPerUnit: 1
+              unit: MINUTE
+EOF
+)"
+
+# add route specifc rate limiting
+kubectl --namespace gloo-system apply --filename - <<EOF
+apiVersion: gateway.solo.io/v1
+kind: VirtualService
+metadata:
+  name: default
+  namespace: gloo-system
+spec:
+  virtualHost:
+    domains:
+    - '*'
+    name: gloo-system.default
+    routes:
+    - matcher:
+        prefix: /other
+      routeAction:
+        single:
+          upstream:
+            name: default-echo-server-8080
+            namespace: gloo-system
+      routePlugins:
+        extensions:
+          configs:
+            envoy-rate-limit:
+              includeVhRateLimits: false
+              rateLimits:
+              - actions:
+                - requestHeaders:
+                    descriptorKey: x-b-header
+                    headerName: x-auth-b
+        transformations:
+          requestTransformation:
+            transformationTemplate:
+              headers:
+                x-xform-b:
+                  text: '{{ header("x-auth-b") }}'
+    - matcher:
+        prefix: /
+      routeAction:
+        single:
+          upstream:
+            name: default-echo-server-8080
+            namespace: gloo-system
+      routePlugins:
+        extensions:
+          configs:
+            envoy-rate-limit:
+              includeVhRateLimits: true
+              rateLimits:
+              - actions:
+                - requestHeaders:
+                    descriptorKey: x-b-header
+                    headerName: x-auth-b
+        transformations:
+          requestTransformation:
+            transformationTemplate:
+              headers:
+                x-xform-a:
+                  text: '{{ header("x-auth-a") }}'
+    virtualHostPlugins:
+      extensions:
+        configs:
+          envoy-rate-limit:
+            rate_limits:
+            - actions:
+              - requestHeaders:
+                  descriptorKey: x-a-header
+                  headerName: x-auth-a
+          extauth:
+            customAuth: {}
+EOF
+
+# curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:10" --header "x-req-b:10" --header "always-approve:true" ${PROXY_URL}/api/pets/1 | jq
+# Succeed
+http --json ${PROXY_URL}/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+# Rate limited
+http --json ${PROXY_URL}/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+# Rate limited
+http --json ${PROXY_URL}/api/pets/1 x-req-a:20 x-req-b:10 always-approve:true
+# Succeed
+http --json ${PROXY_URL}/api/pets/1 x-req-a:30 x-req-b:30 always-approve:true
+
+# Succeed
+http --json ${PROXY_URL}/other x-req-a:30 x-req-b:40 always-approve:true
+# Succeed
+http --json ${PROXY_URL}/other x-req-a:30 x-req-b:50 always-approve:true
+# Rate limited
+http --json ${PROXY_URL}/other x-req-a:40 x-req-b:50 always-approve:true
