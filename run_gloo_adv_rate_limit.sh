@@ -92,7 +92,7 @@ fi
 helm repo add glooe http://storage.googleapis.com/gloo-ee-helm
 helm upgrade --install glooe glooe/gloo-ee \
   --namespace gloo-system \
-  --version 0.16.1 \
+  --version 0.16.2 \
   --set-string license_key=${GLOOE_LICENSE_KEY}
 
 # Deploy echo-server app and wait for it to fully deploy
@@ -208,11 +208,11 @@ done
 
 sleep 10
 
-# should return 200
+printf "Should return 200\n"
 # curl --verbose --silent --show-error --write-out "%{http_code}\n" ${PROXY_URL}/api/pets/1 | jq
 http --json ${PROXY_URL}/api/pets/1
 
-# should return 401
+printf "Should return 403\n"
 # curl --verbose --silent --show-error --write-out "%{http_code}\n" ${PROXY_URL}/api/pets/2 | jq
 http --json ${PROXY_URL}/api/pets/2
 
@@ -272,14 +272,19 @@ spec:
 EOF
 )"
 
-sleep 10
+sleep 15
 
+# Succeed
+printf "Should return 200\n"
 # curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:1" ${PROXY_URL}/api/pets/1 | jq
-# Succeed
 http --json ${PROXY_URL}/api/pets/1 x-req-a:1
+
 # Rate limited
+printf "Should return 429\n"
 http --json ${PROXY_URL}/api/pets/1 x-req-a:1
+
 # Succeed
+printf "Should return 200\n"
 http --json ${PROXY_URL}/api/pets/1 x-req-a:2
 
 #
@@ -307,14 +312,19 @@ kubectl --namespace gloo-system patch virtualservice default \
 EOF
 )"
 
-sleep 10
+sleep 15
 
+# Succeed
+printf "Should return 200\n"
 # curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:1" ${PROXY_URL}/api/pets/1 | jq
-# Succeed
 http --json ${PROXY_URL}/api/pets/1 x-req-a:1
+
 # Rate limited
+printf "Should return 429\n"
 http --json ${PROXY_URL}/api/pets/1 x-req-a:1
+
 # Succeed
+printf "Should return 200\n"
 http --json ${PROXY_URL}/api/pets/1 x-req-a:2
 
 #
@@ -426,19 +436,33 @@ spec:
             customAuth: {}
 EOF
 
+sleep 15
+
+# Succeed
+printf "Should return 200\n"
 # curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:10" --header "x-req-b:10" --header "always-approve:true" ${PROXY_URL}/api/pets/1 | jq
-# Succeed
 http --json ${PROXY_URL}/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+
 # Rate limited
+printf "Should return 429\n"
 http --json ${PROXY_URL}/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+
 # Rate limited
+printf "Should return 429\n"
 http --json ${PROXY_URL}/api/pets/1 x-req-a:20 x-req-b:10 always-approve:true
+
 # Succeed
+printf "Should return 200\n"
 http --json ${PROXY_URL}/api/pets/1 x-req-a:30 x-req-b:30 always-approve:true
 
 # Succeed
+printf "Should return 200\n"
 http --json ${PROXY_URL}/other x-req-a:30 x-req-b:40 always-approve:true
+
 # Succeed
+printf "Should return 200\n"
 http --json ${PROXY_URL}/other x-req-a:30 x-req-b:50 always-approve:true
+
 # Rate limited
+printf "Should return 429\n"
 http --json ${PROXY_URL}/other x-req-a:40 x-req-b:50 always-approve:true

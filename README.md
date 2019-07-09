@@ -15,8 +15,8 @@ This example assumes you have the following tools installed
 * `kubectl`
 * helm
 * skaffold (to build and deploy echo-server and auth-server)
-* jq
-* golang (used to download `kind`)
+* jq (optional; to pretty print JSON responses in tests)
+* golang (optional; used to download `kind`)
 * HTTPie (alternative to curl for REST; https://httpie.org/)
 
 ## Running
