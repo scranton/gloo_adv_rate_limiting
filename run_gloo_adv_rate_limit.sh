@@ -361,6 +361,10 @@ spec:
             rateLimit:
               requestsPerUnit: 1
               unit: MINUTE
+          - key: x-c-header
+            rateLimit:
+              requestsPerUnit: 2
+              unit: MINUTE
 EOF
 )"
 
@@ -377,6 +381,33 @@ spec:
     - '*'
     name: gloo-system.default
     routes:
+    - matcher:
+        prefix: /other/2
+      routeAction:
+        single:
+          upstream:
+            name: default-echo-server-8080
+            namespace: gloo-system
+      routePlugins:
+        extensions:
+          configs:
+            envoy-rate-limit:
+              includeVhRateLimits: false
+              rateLimits:
+              - actions:
+                - requestHeaders:
+                    descriptorKey: x-b-header
+                    headerName: x-auth-b
+              - actions:
+                - requestHeaders:
+                    descriptorKey: x-c-header
+                    headerName: x-auth-c
+        transformations:
+          requestTransformation:
+            transformationTemplate:
+              headers:
+                x-xform-c:
+                  text: '{{ header("x-auth-c") }}'
     - matcher:
         prefix: /other
       routeAction:
@@ -466,3 +497,19 @@ http --json ${PROXY_URL}/other x-req-a:30 x-req-b:50 always-approve:true
 # Rate limited
 printf "Should return 429\n"
 http --json ${PROXY_URL}/other x-req-a:40 x-req-b:50 always-approve:true
+
+# Succeed
+printf "Should return 200\n"
+http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:60 x-req-c:10 always-approve:true
+
+# Succeed as `c` header is 2 per minute
+printf "Should return 200\n"
+http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:61 x-req-c:10 always-approve:true
+
+# Rate Limit
+printf "Should return 429\n"
+http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:62 x-req-c:10 always-approve:true
+
+# Succeed
+printf "Should return 200\n"
+http --json ${PROXY_URL}/other/2 x-req-a:50 x-req-b:63 x-req-c:11 always-approve:true
