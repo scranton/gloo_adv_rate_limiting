@@ -335,190 +335,227 @@ sleep 15
 
 # Succeed
 printf "Should return 200\n"
-# curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "user:Scott" $PROXY_URL/service/service1 | jq
-http --json $PROXY_URL/service/service1 user:Scott
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Scott" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Scott
 
 # Rate limited - too many calls per minute
 printf "Should return 429\n"
-http --json $PROXY_URL/service/service1 user:Scott
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Scott" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Scott
 
 # Rate limited - same account; too many calls per minute
 printf "Should return 429\n"
-http --json $PROXY_URL/service/service1 user:Yuval
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Yuval" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Yuval
 
 # Succeed - different account
 printf "Should return 200\n"
-http --json $PROXY_URL/service/service1 user:Jonathan
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Jonathan" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Jonathan
 
-# #
-# # Rate Limiting descriptor experiments
-# #
+# Succeed - PLUS plan so 2 calls per minute
+printf "Should return 200\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Jonathan" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Jonathan
 
-# # Edit Envoy Rate Server Settings
-# # glooctl edit settings --namespace gloo-system --name default ratelimit custom-server-config
+# Rate limited - too many calls per minute
+printf "Should return 429\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Jonathan" --output /dev/null $PROXY_URL/service/service1
+http --headers --json $PROXY_URL/service/service1 user:Jonathan
 
-# # descriptors:
-# # - key: x-a-header
-# #   rateLimit:
-# #     requestsPerUnit: 1
-# #     unit: MINUTE
-# # - key: x-b-header
-# #   rateLimit:
-# #     requestsPerUnit: 1
-# #     unit: MINUTE
-# # - key: x-c-header
-# #   rateLimit:
-# #     requestsPerUnit: 2
-# #     unit: MINUTE
+#
+# Rate Limiting descriptor experiments
+#
 
-# kubectl --namespace gloo-system patch settings default \
-#   --type='merge' \
-#   --patch "$(cat<<EOF
-# spec:
-#   extensions:
-#     configs:
-#       envoy-rate-limit:
-#         customConfig:
-#           descriptors:
-#           - key: x-a-header
-#             rateLimit:
-#               requestsPerUnit: 1
-#               unit: MINUTE
-#           - key: x-b-header
-#             rateLimit:
-#               requestsPerUnit: 1
-#               unit: MINUTE
-#           - key: x-c-header
-#             rateLimit:
-#               requestsPerUnit: 2
-#               unit: MINUTE
-# EOF
-# )"
+# Edit Envoy Rate Server Settings
+# glooctl edit settings --namespace gloo-system --name default ratelimit custom-server-config
 
-# # add route specifc rate limiting
-# kubectl --namespace gloo-system apply --filename - <<EOF
-# apiVersion: gateway.solo.io/v1
-# kind: VirtualService
-# metadata:
-#   name: default
-#   namespace: gloo-system
-# spec:
-#   virtualHost:
-#     domains:
-#     - '*'
-#     name: gloo-system.default
-#     routes:
-#     - matcher:
-#         prefix: /other/2
-#       routeAction:
-#         single:
-#           upstream:
-#             name: default-echo-server-8080
-#             namespace: gloo-system
-#       routePlugins:
-#         extensions:
-#           configs:
-#             envoy-rate-limit:
-#               includeVhRateLimits: false
-#               rateLimits:
-#               - actions:
-#                 - requestHeaders:
-#                     descriptorKey: x-b-header
-#                     headerName: x-auth-b
-#               - actions:
-#                 - requestHeaders:
-#                     descriptorKey: x-c-header
-#                     headerName: x-auth-c
-#     - matcher:
-#         prefix: /other
-#       routeAction:
-#         single:
-#           upstream:
-#             name: default-echo-server-8080
-#             namespace: gloo-system
-#       routePlugins:
-#         extensions:
-#           configs:
-#             envoy-rate-limit:
-#               includeVhRateLimits: false
-#               rateLimits:
-#               - actions:
-#                 - requestHeaders:
-#                     descriptorKey: x-b-header
-#                     headerName: x-auth-b
-#     - matcher:
-#         prefix: /
-#       routeAction:
-#         single:
-#           upstream:
-#             name: default-echo-server-8080
-#             namespace: gloo-system
-#       routePlugins:
-#         extensions:
-#           configs:
-#             envoy-rate-limit:
-#               includeVhRateLimits: true
-#               rateLimits:
-#               - actions:
-#                 - requestHeaders:
-#                     descriptorKey: x-b-header
-#                     headerName: x-auth-b
-#     virtualHostPlugins:
-#       extensions:
-#         configs:
-#           envoy-rate-limit:
-#             rate_limits:
-#             - actions:
-#               - requestHeaders:
-#                   descriptorKey: x-a-header
-#                   headerName: x-auth-a
-#           extauth:
-#             customAuth: {}
-# EOF
+# descriptors:
+# - key: account_id
+#   descriptors:
+#   - key: generic_key
+#     value: service1
+#     descriptors:
+#     - key: plan
+#       value: BASIC
+#       rateLimit:
+#         requestsPerUnit: 1
+#         unit: MINUTE
+#     - key: plan
+#       value: PLUS
+#       rateLimit:
+#         requestsPerUnit: 2
+#         unit: MINUTE
+#   - key: generic_key
+#     value: service2
+#     descriptors:
+#     - key: plan
+#       value: BASIC
+#       rateLimit:
+#         requestsPerUnit: 1
+#         unit: MINUTE
+#     - key: plan
+#       value: PLUS
+#       rateLimit:
+#         requestsPerUnit: 2
+#         unit: MINUTE
 
-# sleep 15
+kubectl --namespace gloo-system apply --filename - <<EOF
+apiVersion: gloo.solo.io/v1
+kind: Settings
+metadata:
+  annotations:
+    helm.sh/hook: pre-install
+  labels:
+    app: gloo
+    gloo: settings
+  name: default
+  namespace: gloo-system
+spec:
+  bindAddr: 0.0.0.0:9977
+  discoveryNamespace: gloo-system
+  extensions:
+    configs:
+      envoy-rate-limit:
+        customConfig:
+          descriptors:
+          - key: account_id
+            descriptors:
+            - key: generic_key
+              value: service1
+              descriptors:
+              - key: plan
+                value: BASIC
+                rateLimit:
+                  requestsPerUnit: 1
+                  unit: MINUTE
+              - key: plan
+                value: PLUS
+                rateLimit:
+                  requestsPerUnit: 2
+                  unit: MINUTE
+            - key: generic_key
+              value: service2
+              descriptors:
+              - key: plan
+                value: BASIC
+                rateLimit:
+                  requestsPerUnit: 1
+                  unit: MINUTE
+              - key: plan
+                value: PLUS
+                rateLimit:
+                  requestsPerUnit: 2
+                  unit: MINUTE
+      extauth:
+        extauthzServerRef:
+          name: gloo-system-auth-server-8000
+          namespace: gloo-system
+        requestBody:
+          maxRequestBytes: 10240
+        requestTimeout: 1s
+      rate-limit:
+        ratelimit_server_ref:
+          name: rate-limit
+          namespace: gloo-system
+  kubernetesArtifactSource: {}
+  kubernetesConfigSource: {}
+  kubernetesSecretSource: {}
+  refreshRate: 60s
+EOF
 
-# # Succeed
-# printf "Should return 200\n"
-# # curl --verbose --silent --show-error --write-out "%{http_code}\n" --header "x-req-a:10" --header "x-req-b:10" --header "always-approve:true" $PROXY_URL/api/pets/1 | jq
-# http --json $PROXY_URL/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+# add route specifc rate limiting
+kubectl --namespace gloo-system apply --filename - <<EOF
+apiVersion: gateway.solo.io/v1
+kind: VirtualService
+metadata:
+  name: default
+  namespace: gloo-system
+spec:
+  virtualHost:
+    domains:
+    - '*'
+    name: gloo-system.default
+    routes:
+    - matcher:
+        prefix: /service/service1
+      routeAction:
+        single:
+          upstream:
+            name: default-echo-server-8080
+            namespace: gloo-system
+      routePlugins:
+        extensions:
+          configs:
+            envoy-rate-limit:
+              includeVhRateLimits: false
+              rateLimits:
+              - actions:
+                - requestHeaders:
+                    descriptorKey: account_id
+                    headerName: x-account-id
+                - genericKey:
+                    descriptorValue: service1
+                - requestHeaders:
+                    descriptorKey: plan
+                    headerName: x-plan
+    - matcher:
+        prefix: /service/service2
+      routeAction:
+        single:
+          upstream:
+            name: default-echo-server-8080
+            namespace: gloo-system
+      routePlugins:
+        extensions:
+          configs:
+            envoy-rate-limit:
+              includeVhRateLimits: false
+              rateLimits:
+              - actions:
+                - requestHeaders:
+                    descriptorKey: account_id
+                    headerName: x-account-id
+                - genericKey:
+                    descriptorValue: service2
+                - requestHeaders:
+                    descriptorKey: plan
+                    headerName: x-plan
+    virtualHostPlugins:
+      extensions:
+        configs:
+          extauth:
+            customAuth: {}
+EOF
 
-# # Rate limited
-# printf "Should return 429\n"
-# http --json $PROXY_URL/api/pets/1 x-req-a:10 x-req-b:10 always-approve:true
+sleep 60
 
-# # Rate limited
-# printf "Should return 429\n"
-# http --json $PROXY_URL/api/pets/1 x-req-a:20 x-req-b:10 always-approve:true
+# Succeed
+printf "Should return 200\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Scott" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Scott
 
-# # Succeed
-# printf "Should return 200\n"
-# http --json $PROXY_URL/api/pets/1 x-req-a:30 x-req-b:30 always-approve:true
+# Rate limited - too many calls per minute
+printf "Should return 429\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Scott" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Scott
 
-# # Succeed
-# printf "Should return 200\n"
-# http --json $PROXY_URL/other x-req-a:30 x-req-b:40 always-approve:true
+# Rate limited - same account; too many calls per minute
+printf "Should return 429\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Yuval" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Yuval
 
-# # Succeed
-# printf "Should return 200\n"
-# http --json $PROXY_URL/other x-req-a:30 x-req-b:50 always-approve:true
+# Succeed - different account
+printf "Should return 200\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Jonathan" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Jonathan
 
-# # Rate limited
-# printf "Should return 429\n"
-# http --json $PROXY_URL/other x-req-a:40 x-req-b:50 always-approve:true
+# Succeed - PLUS plan so 2 calls per minute
+printf "Should return 200\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Jonathan" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Jonathan
 
-# # Succeed
-# printf "Should return 200\n"
-# http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:60 x-req-c:10 always-approve:true
-
-# # Succeed as `c` header is 2 per minute
-# printf "Should return 200\n"
-# http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:61 x-req-c:10 always-approve:true
-
-# # Rate Limit
-# printf "Should return 429\n"
-# http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:62 x-req-c:10 always-approve:true
-
-# # Succeed
-# printf "Should return 200\n"
-# http --json $PROXY_URL/other/2 x-req-a:50 x-req-b:63 x-req-c:11 always-approve:true
+# Rate limited - too many calls per minute
+printf "Should return 429\n"
+# curl --silent --show-error --write-out "%{http_code}\n" --header "user:Jonathan" --output /dev/null $PROXY_URL/service/service1
+http --headers $PROXY_URL/service/service1 user:Jonathan
