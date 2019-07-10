@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
-	"strings"
+	"regexp"
 
 	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	pb "github.com/envoyproxy/go-control-plane/envoy/service/auth/v2"
@@ -19,7 +20,10 @@ const (
 	port = ":8000"
 )
 
-type server struct{}
+type server struct {
+	users    map[string]int
+	accounts map[int]map[string]string
+}
 
 func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResponse, error) {
 	http := req.GetAttributes().GetRequest().GetHttp()
@@ -30,42 +34,52 @@ func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResp
 	log.Println(headers)
 	log.Println(path)
 
+	re := regexp.MustCompile("/service/(.*)")
+
+	service := re.FindStringSubmatch(path)[1]
+
+	var user string
+	var ok bool
+	if user, ok = headers["user"]; !ok {
+		log.Println("Denied: No User Specified")
+		return &pb.CheckResponse{
+			Status: &googlerpc.Status{Code: int32(googlerpc.PERMISSION_DENIED)},
+			HttpResponse: &pb.CheckResponse_DeniedResponse{
+				DeniedResponse: &pb.DeniedHttpResponse{
+					Status: &envoytype.HttpStatus{Code: envoytype.StatusCode_Forbidden},
+					Body:   `{"msg": "no user specified"}`,
+				},
+			},
+		}, nil
+	}
+
+	account_id := s.users[user]
+	plan := s.accounts[account_id][service]
+
 	respHeaders := []*core.HeaderValueOption{
 		{
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
-				Key:   "x-auth-a",
-				Value: headers["x-req-a"],
+				Key:   "x-account-id",
+				Value: fmt.Sprint(account_id),
 			},
 		},
 		{
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
-				Key:   "x-auth-b",
-				Value: headers["x-req-b"],
+				Key:   "x-plan",
+				Value: plan,
 			},
 		}, {
 			Append: &types.BoolValue{Value: false},
 			Header: &core.HeaderValue{
-				Key:   "x-auth-c",
-				Value: headers["x-req-c"],
-			},
-		}, {
-			Append: &types.BoolValue{Value: false},
-			Header: &core.HeaderValue{
-				Key:   "x-auth-d",
-				Value: headers["x-req-d"],
-			},
-		}, {
-			Append: &types.BoolValue{Value: false},
-			Header: &core.HeaderValue{
-				Key:   "x-auth-e",
-				Value: headers["x-req-e"],
+				Key:   "x-service",
+				Value: service,
 			},
 		},
 	}
 
-	if strings.HasPrefix(path, "/api/pets/1") || headers["always-approve"] == "true" {
+	if plan != "NONE" {
 		log.Println("Approved")
 		return &pb.CheckResponse{
 			Status: &googlerpc.Status{Code: int32(googlerpc.OK)},
@@ -96,8 +110,31 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterAuthorizationServer(s, &server{})
+
+	pb.RegisterAuthorizationServer(s, &server{
+		users: map[string]int{
+			"Scott":    1,
+			"Yuval":    1,
+			"Jonathan": 2,
+			"Yuliia":   2,
+			"Bill":     3,
+		},
+		accounts: map[int]map[string]string{
+			1: {
+				"service1": "BASIC", "service2": "NONE",
+			},
+			2: {
+				"service1": "PLUS", "service2": "BASIC",
+			},
+			3: {
+				"service1": "NONE", "service2": "PLUS",
+			},
+		},
+	})
+
+	// Helps Gloo detect this is a gRPC service
 	reflection.Register(s)
+
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
