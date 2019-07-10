@@ -21,13 +21,12 @@ const (
 )
 
 type server struct {
-	users    map[string]int
-	accounts map[int]map[string]string
+	users    map[string]int            // user => account_id mapping
+	accounts map[int]map[string]string // account_id => plan map
 }
 
 func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResponse, error) {
 	http := req.GetAttributes().GetRequest().GetHttp()
-
 	headers := http.GetHeaders()
 	path := http.GetPath()
 
@@ -38,9 +37,8 @@ func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResp
 
 	service := re.FindStringSubmatch(path)[1]
 
-	var user string
-	var ok bool
-	if user, ok = headers["user"]; !ok {
+	user, ok := headers["user"]
+	if !ok {
 		log.Println("Denied: No User Specified")
 		return &pb.CheckResponse{
 			Status: &googlerpc.Status{Code: int32(googlerpc.PERMISSION_DENIED)},
@@ -53,31 +51,8 @@ func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResp
 		}, nil
 	}
 
-	account_id := s.users[user]
-	plan := s.accounts[account_id][service]
-
-	respHeaders := []*core.HeaderValueOption{
-		{
-			Append: &types.BoolValue{Value: false},
-			Header: &core.HeaderValue{
-				Key:   "x-account-id",
-				Value: fmt.Sprint(account_id),
-			},
-		},
-		{
-			Append: &types.BoolValue{Value: false},
-			Header: &core.HeaderValue{
-				Key:   "x-plan",
-				Value: plan,
-			},
-		}, {
-			Append: &types.BoolValue{Value: false},
-			Header: &core.HeaderValue{
-				Key:   "x-service",
-				Value: service,
-			},
-		},
-	}
+	accountId := s.users[user]
+	plan := s.accounts[accountId][service]
 
 	if plan != "NONE" {
 		log.Println("Approved")
@@ -85,7 +60,28 @@ func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResp
 			Status: &googlerpc.Status{Code: int32(googlerpc.OK)},
 			HttpResponse: &pb.CheckResponse_OkResponse{
 				OkResponse: &pb.OkHttpResponse{
-					Headers: respHeaders,
+					Headers: []*core.HeaderValueOption{
+						{
+							Append: &types.BoolValue{Value: false},
+							Header: &core.HeaderValue{
+								Key:   "x-account-id",
+								Value: fmt.Sprint(accountId),
+							},
+						},
+						{
+							Append: &types.BoolValue{Value: false},
+							Header: &core.HeaderValue{
+								Key:   "x-plan",
+								Value: plan,
+							},
+						}, {
+							Append: &types.BoolValue{Value: false},
+							Header: &core.HeaderValue{
+								Key:   "x-service",
+								Value: service,
+							},
+						},
+					},
 				},
 			},
 		}, nil
@@ -96,9 +92,8 @@ func (s *server) Check(ctx context.Context, req *pb.CheckRequest) (*pb.CheckResp
 		Status: &googlerpc.Status{Code: int32(googlerpc.PERMISSION_DENIED)},
 		HttpResponse: &pb.CheckResponse_DeniedResponse{
 			DeniedResponse: &pb.DeniedHttpResponse{
-				Status:  &envoytype.HttpStatus{Code: envoytype.StatusCode_Forbidden},
-				Headers: respHeaders,
-				Body:    `{"msg": "denied"}`,
+				Status: &envoytype.HttpStatus{Code: envoytype.StatusCode_Forbidden},
+				Body:   `{"msg": "denied"}`,
 			},
 		},
 	}, nil
@@ -109,6 +104,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
+
 	s := grpc.NewServer()
 
 	pb.RegisterAuthorizationServer(s, &server{
@@ -120,15 +116,9 @@ func main() {
 			"Bill":     3,
 		},
 		accounts: map[int]map[string]string{
-			1: {
-				"service1": "BASIC", "service2": "NONE",
-			},
-			2: {
-				"service1": "PLUS", "service2": "BASIC",
-			},
-			3: {
-				"service1": "NONE", "service2": "PLUS",
-			},
+			1: {"service1": "BASIC", "service2": "NONE",},
+			2: {"service1": "PLUS", "service2": "BASIC",},
+			3: {"service1": "NONE", "service2": "PLUS",},
 		},
 	})
 
